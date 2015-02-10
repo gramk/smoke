@@ -5,6 +5,7 @@ import java.io.{ BufferedInputStream, FileInputStream, File }
 import scala.util.Try
 import scala.io.Source
 import scala.collection.JavaConversions._
+import java.util.zip.ZipFile
 
 case class Asset(contentType: String, data: Array[Byte])
 
@@ -24,19 +25,42 @@ trait StaticAssets {
     if (dotIndex == -1) "" else name.substring(dotIndex + 1)
   }
 
-  private def isStaticAsset(r: URL) = {
-    (PublicFolderPrefixes.exists(r.getPath.startsWith(_)) ||
-      (r.getProtocol() == "jar" && {
-        val path = r.getPath().stripPrefix("file:")
+  private def isStaticAsset(url: URL) =
+    url.getProtocol() match {
+      case "file" if new File(url.getFile()).isFile() ⇒
+        PublicFolderPrefixes.exists(url.getPath.startsWith(_))
+
+      case "jar" if !isJarDirectory(url) ⇒
+        val path = url.getPath().stripPrefix("file:")
         ApplicationPrefixes.exists(path.startsWith(_))
-      })) &&
-      (new File(r.getFile())).isFile()
-  }
+
+      case _ ⇒
+        false
+    }
+
+  private def isJarDirectory(url: URL) =
+    url.getFile().split("!").toList match {
+      case jarPath :: inJarPath :: Nil ⇒
+        val jar = new ZipFile(new URL(jarPath).getFile)
+        val entry = jar.getEntry(inJarPath)
+        entry.isDirectory() || {
+          var input: java.io.InputStream = null
+          try {
+            input = jar.getInputStream(entry)
+          } finally {
+            if (input != null) input.close()
+          }
+          input == null
+        }
+    }
 
   private def readFile(path: String): Option[Array[Byte]] = {
     this.getClass.getClassLoader.getResources(path).toList.collectFirst {
       case r if isStaticAsset(r) ⇒
-        val is = r.openStream
+        val connection = r.openConnection()
+        println(connection.getClass())
+        val is = connection.getInputStream()
+        println(is.getClass())
         try {
           val bis = new BufferedInputStream(is)
           Stream.continually(bis.read).takeWhile(-1 !=).map(_.toByte).toArray
